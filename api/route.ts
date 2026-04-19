@@ -1,27 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createOrder, getOrder } from '@/lib/order-store';
+import { updateOrderStatus } from '@/lib/order-store';
 
-export async function GET(req: NextRequest) {
-  const id = req.nextUrl.searchParams.get('id');
-  if (!id) return NextResponse.json({ error: 'ID order wajib diisi.' }, { status: 400 });
-
-  const order = getOrder(id);
-  if (!order) return NextResponse.json({ error: 'Order tidak ditemukan.' }, { status: 404 });
-  return NextResponse.json({ order });
+async function parseBody(req: NextRequest) {
+  const contentType = req.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    return req.json();
+  }
+  const formData = await req.formData();
+  return Object.fromEntries(formData.entries());
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const { productId, customerName, whatsapp, paymentMethod } = body;
+  const body = await parseBody(req);
+  const id = String(body.id || '');
+  const status = String(body.status || '');
 
-  if (!productId || !customerName || !whatsapp || !paymentMethod) {
-    return NextResponse.json({ error: 'Data order belum lengkap.' }, { status: 400 });
+  if (!id || !status) {
+    return NextResponse.json({ error: 'id dan status wajib diisi.' }, { status: 400 });
   }
 
-  try {
-    const order = createOrder({ productId, customerName, whatsapp, paymentMethod });
-    return NextResponse.json({ order }, { status: 201 });
-  } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Gagal membuat order.' }, { status: 400 });
+  const noteMap: Record<string, string> = {
+    paid: 'Webhook pembayaran diterima.',
+    processing: 'Admin mulai memproses order.',
+    done: 'Order ditandai selesai oleh admin.',
+    failed: 'Order ditandai gagal.'
+  };
+
+  const order = updateOrderStatus(id, status as never, noteMap[status] || 'Status diperbarui.');
+  if (!order) return NextResponse.json({ error: 'Order tidak ditemukan.' }, { status: 404 });
+
+  const acceptsHtml = (req.headers.get('accept') || '').includes('text/html');
+  if (acceptsHtml) {
+    return NextResponse.redirect(new URL('/admin', req.url));
   }
+
+  return NextResponse.json({ ok: true, order });
 }
